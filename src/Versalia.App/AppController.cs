@@ -238,10 +238,18 @@ namespace Versalia.App
             menu.Items.Add(sync);
             menu.Items.Add(new Forms.ToolStripSeparator());
 
+            menu.Items.Add(Item("Buscar actualización…", CheckForUpdate));
             menu.Items.Add(Item("Iniciar con Windows", ToggleAutostart, IsAutostart()));
             menu.Items.Add(Item("Abrir carpeta de registros", () => Process.Start(new ProcessStartInfo(Paths.Logs) { UseShellExecute = true })));
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add(Item("Salir", () => System.Windows.Application.Current.Shutdown()));
+        }
+
+        private static void CheckForUpdate()
+        {
+            var script = System.IO.Path.Combine(AppContext.BaseDirectory, "Actualizar-Versalia.ps1");
+            if (!System.IO.File.Exists(script)) { Log.Write("Falta Actualizar-Versalia.ps1 junto al programa."); return; }
+            Process.Start(new ProcessStartInfo("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\"") { UseShellExecute = true });
         }
 
         private void SetPalette(string id) { _settings.Palette = id; _settings.Save(); }

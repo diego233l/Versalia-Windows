@@ -15,6 +15,14 @@ cd ~\Downloads; Unblock-File .\Versalia-Windows-x64.zip; Expand-Archive .\Versal
 
 Aparece un icono verde con una **V** junto al reloj (pulsa `^` si está oculto).
 
+## Actualizar (PowerShell, una sola línea)
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Versalia\Actualizar-Versalia.ps1"
+```
+
+(o clic derecho en el icono → «Buscar actualización…»). La primera vez instala GitHub CLI y abre el navegador para iniciar sesión.
+
 ## Cómo se usa
 
 | Atajo | Qué hace |

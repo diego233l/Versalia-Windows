@@ -38,7 +38,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path artifacts/zip | Out-Null
           Copy-Item artifacts/publish/Versalia.exe artifacts/zip/
-          Copy-Item scripts/Instalar-Versalia.ps1, scripts/Desinstalar-Versalia.ps1 artifacts/zip/
+          Copy-Item scripts/Instalar-Versalia.ps1, scripts/Desinstalar-Versalia.ps1, scripts/Actualizar-Versalia.ps1 artifacts/zip/
           Copy-Item README.md artifacts/zip/LEEME.md
           Compress-Archive -Path artifacts/zip/* -DestinationPath artifacts/Versalia-Windows-x64.zip -Force
           Get-Item artifacts/Versalia-Windows-x64.zip | Select-Object Name, Length

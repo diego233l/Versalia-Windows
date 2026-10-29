@@ -9,6 +9,8 @@ Start-Sleep -Milliseconds 500
 New-Item -ItemType Directory -Force -Path $destino | Out-Null
 Copy-Item $origen (Join-Path $destino 'Versalia.exe') -Force
 Unblock-File (Join-Path $destino 'Versalia.exe')
+$actualizador = Join-Path $PSScriptRoot 'Actualizar-Versalia.ps1'
+if (Test-Path $actualizador) { Copy-Item $actualizador (Join-Path $destino 'Actualizar-Versalia.ps1') -Force }
 
 $menuInicio = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Versalia.lnk'
 $shell = New-Object -ComObject WScript.Shell
