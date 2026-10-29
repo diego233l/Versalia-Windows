@@ -21,6 +21,8 @@ namespace Versalia.App
         private volatile bool _wake;
         private string _artworkKey = "";
         private int _artworkTries;
+        private double _lastRawPositionMs = -1;
+        private DateTimeOffset _lastRawUpdated;
 
         public void Start() => _ = Task.Run(Loop);
 
@@ -98,6 +100,10 @@ namespace Versalia.App
 
             double durationMs = Math.Max(0, (timeline.EndTime - timeline.StartTime).TotalMilliseconds);
             double positionMs = Math.Max(0, (timeline.Position - timeline.StartTime).TotalMilliseconds);
+            // Algunos reproductores (p. ej. vídeos del navegador) repiten la misma posición y marca de tiempo: no es una lectura nueva.
+            bool fresh = positionMs != _lastRawPositionMs || timeline.LastUpdatedTime != _lastRawUpdated;
+            _lastRawPositionMs = positionMs;
+            _lastRawUpdated = timeline.LastUpdatedTime;
             if (state == PlaybackState.Playing)
             {
                 double sinceUpdate = (DateTimeOffset.UtcNow - timeline.LastUpdatedTime).TotalMilliseconds;
@@ -121,7 +127,7 @@ namespace Versalia.App
                     if (artwork != null) _artworkTries = -1;
                 }
             }
-            Updated?.Invoke(new PlaybackSnapshot(state, track, positionMs, Monotonic.Now), artwork);
+            Updated?.Invoke(new PlaybackSnapshot(state, track, positionMs, Monotonic.Now, fresh), artwork);
         }
 
         private static async Task<byte[]?> ReadThumbnail(GlobalSystemMediaTransportControlsSessionMediaProperties props)

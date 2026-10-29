@@ -66,6 +66,10 @@ namespace Versalia.App
                 StartTrack(snapshot.Track);
                 _clock.Reset(snapshot.PositionMs, snapshot.CapturedAt, playing);
             }
+            else if (!snapshot.PositionFresh && playing)
+            {
+                // Posición congelada: se sigue extrapolando con el reloj propio.
+            }
             else
             {
                 var outcome = _clock.Observe(snapshot.PositionMs, snapshot.CapturedAt, playing, 60);
