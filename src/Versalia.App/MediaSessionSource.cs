@@ -112,7 +112,6 @@ namespace Versalia.App
             if (title.Length > 0 && durationMs <= 0 && _zeroDurationPolls < 4)
             {
                 _zeroDurationPolls++;
-                _wake = true;
                 return;
             }
             _zeroDurationPolls = 0;
