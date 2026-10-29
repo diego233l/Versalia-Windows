@@ -21,6 +21,8 @@ namespace Versalia.App
         private volatile bool _wake;
         private string _artworkKey = "";
         private int _artworkTries;
+        private double _lastRawPositionMs = -1;
+        private DateTimeOffset _lastRawUpdated;
 
         public void Start() => _ = Task.Run(Loop);
 
@@ -50,19 +52,27 @@ namespace Versalia.App
             }
         }
 
+        private string _lastSessionIds = "";
+        private int _zeroDurationPolls;
+
+        /// <summary>Solo Apple Music y Spotify; navegadores, vídeos y demás se ignoran.</summary>
+        private static bool IsSupported(GlobalSystemMediaTransportControlsSession s) =>
+            s.SourceAppUserModelId.IndexOf("AppleMusic", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            s.SourceAppUserModelId.IndexOf("Spotify", StringComparison.OrdinalIgnoreCase) >= 0;
+
         private GlobalSystemMediaTransportControlsSession? Choose()
         {
-            var sessions = _manager!.GetSessions().ToList();
-            bool IsPlaying(GlobalSystemMediaTransportControlsSession s) =>
-                s.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
-            bool IsMusicApp(GlobalSystemMediaTransportControlsSession s) =>
-                s.SourceAppUserModelId.IndexOf("AppleMusic", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                s.SourceAppUserModelId.IndexOf("Apple", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                s.SourceAppUserModelId.IndexOf("Spotify", StringComparison.OrdinalIgnoreCase) >= 0;
-            return sessions.FirstOrDefault(s => IsMusicApp(s) && IsPlaying(s))
-                   ?? sessions.FirstOrDefault(IsPlaying)
-                   ?? sessions.FirstOrDefault(IsMusicApp)
-                   ?? _manager.GetCurrentSession();
+            var all = _manager!.GetSessions().ToList();
+            var ids = string.Join(", ", all.Select(s => s.SourceAppUserModelId));
+            if (ids != _lastSessionIds)
+            {
+                _lastSessionIds = ids;
+                Log.Write("Reproductores del sistema: " + (ids.Length == 0 ? "(ninguno)" : ids));
+            }
+            var sessions = all.Where(IsSupported).ToList();
+            return sessions.FirstOrDefault(s => s.GetPlaybackInfo().PlaybackStatus ==
+                       GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+                   ?? sessions.FirstOrDefault();
         }
 
         private async Task PollOnce()
@@ -97,7 +107,19 @@ namespace Versalia.App
             }
 
             double durationMs = Math.Max(0, (timeline.EndTime - timeline.StartTime).TotalMilliseconds);
+            // Al cambiar de canción el reproductor tarda un momento en dar la duración: se espera un poco antes de
+            // dar la pista por buena, para buscar la letra con la duración correcta.
+            if (title.Length > 0 && durationMs <= 0 && _zeroDurationPolls < 4)
+            {
+                _zeroDurationPolls++;
+                return;
+            }
+            _zeroDurationPolls = 0;
             double positionMs = Math.Max(0, (timeline.Position - timeline.StartTime).TotalMilliseconds);
+            // Algunos reproductores (p. ej. vídeos del navegador) repiten la misma posición y marca de tiempo: no es una lectura nueva.
+            bool fresh = positionMs != _lastRawPositionMs || timeline.LastUpdatedTime != _lastRawUpdated;
+            _lastRawPositionMs = positionMs;
+            _lastRawUpdated = timeline.LastUpdatedTime;
             if (state == PlaybackState.Playing)
             {
                 double sinceUpdate = (DateTimeOffset.UtcNow - timeline.LastUpdatedTime).TotalMilliseconds;
@@ -121,7 +143,7 @@ namespace Versalia.App
                     if (artwork != null) _artworkTries = -1;
                 }
             }
-            Updated?.Invoke(new PlaybackSnapshot(state, track, positionMs, Monotonic.Now), artwork);
+            Updated?.Invoke(new PlaybackSnapshot(state, track, positionMs, Monotonic.Now, fresh), artwork);
         }
 
         private static async Task<byte[]?> ReadThumbnail(GlobalSystemMediaTransportControlsSessionMediaProperties props)
