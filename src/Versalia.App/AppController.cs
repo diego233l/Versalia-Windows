@@ -174,6 +174,7 @@ namespace Versalia.App
 
             var mode = _settings.Mode == "overlay" ? SceneMode.Overlay : SceneMode.Stage;
             int overlayIndex = _settings.Mode == "overlay" ? PickOverlayMonitor().Index : -1;
+            _scene.Style = _settings.Style;
             _scene.Update(frame, _monitors, mode, overlayIndex, now);
             foreach (var w in _windows) w.View.InvalidateVisual();
         }
@@ -212,6 +213,14 @@ namespace Versalia.App
             }
             menu.Items.Add(overlayMenu);
             menu.Items.Add(new Forms.ToolStripSeparator());
+
+            var styles = new Forms.ToolStripMenuItem("Estilo de letra");
+            foreach (var (id, label) in new[] { ("duo", "Dúo (líneas + constelación)"), ("aurora", "Aurora"), ("neon", "Neón"), ("poster", "Póster"), ("orbit", "Órbita") })
+            {
+                string captured = id;
+                styles.DropDownItems.Add(Item(label, () => { _settings.Style = captured; _settings.Save(); }, _settings.Style == id));
+            }
+            menu.Items.Add(styles);
 
             var palettes = new Forms.ToolStripMenuItem("Colores");
             palettes.DropDownItems.Add(Item("Automático (según la portada)", () => SetPalette("auto"), _settings.Palette == "auto"));

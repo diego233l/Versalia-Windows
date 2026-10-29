@@ -18,7 +18,7 @@ namespace Versalia.App
     ///  - Cada palabra cantada lanza un cometa desde su estrella hasta la palabra en la otra pantalla.
     /// Con un solo monitor todo se junta en una pantalla.
     /// </summary>
-    internal sealed class Scene
+    internal sealed partial class Scene
     {
         private sealed class Glyph { public Geometry Geo = Geometry.Empty; public double Width, Height; }
         private sealed class Comet { public Point From, To; public double Start; public double Duration = 0.85; }
@@ -30,6 +30,8 @@ namespace Versalia.App
             public Rect Block;
         }
 
+        private static readonly Typeface Heavy = new Typeface(new FontFamily("Segoe UI Variable Display, Segoe UI"),
+            FontStyles.Normal, FontWeights.ExtraBold, FontStretches.Normal);
         private static readonly Typeface Face = new Typeface(new FontFamily("Segoe UI Variable Display, Segoe UI"),
             FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
 
@@ -80,7 +82,7 @@ namespace Versalia.App
             {
                 _layoutSignature = signature;
                 AssignRoles();
-                _layouts.Clear();
+                _layouts.Clear(); _groupLayouts.Clear();
                 _glyphs.Clear();
             }
 
@@ -101,7 +103,7 @@ namespace Versalia.App
                 _lastStarted = f.LastStarted;
                 _lastLine = -2;
                 _comets.Clear(); _ripples.Clear(); _groupAlpha.Clear();
-                _points.Clear(); _edges.Clear(); _layouts.Clear();
+                _points.Clear(); _edges.Clear(); _layouts.Clear(); _groupLayouts.Clear();
                 if (_glyphs.Count > 400) _glyphs.Clear();
             }
 
@@ -173,13 +175,19 @@ namespace Versalia.App
             var words = _f.Words; var lyrics = _f.Lyrics;
             if (words == null || lyrics == null || _lyric == null || entryIndex < 0 || entryIndex >= words.Entries.Count) return;
             var entry = words.Entries[entryIndex];
-            var layout = LayoutFor(entry.LineIndex);
-            if (layout == null || entry.WordIndex >= layout.Boxes.Count) return;
-            var box = layout.Boxes[entry.WordIndex];
+            Point target;
+            if (Style == "duo")
+            {
+                var layout = LayoutFor(entry.LineIndex);
+                if (layout == null || entry.WordIndex >= layout.Boxes.Count) return;
+                var box = layout.Boxes[entry.WordIndex];
+                target = new Point(box.X + box.Width / 2, box.Y + box.Height / 2);
+            }
+            else target = StyleTarget(entryIndex);
             _comets.Add(new Comet
             {
                 From = StarPosition(entry),
-                To = new Point(box.X + box.Width / 2, box.Y + box.Height / 2),
+                To = target,
                 Start = _now,
                 Duration = Dual ? 0.9 : 0.6,
             });
@@ -217,13 +225,13 @@ namespace Versalia.App
         private static double Ease(double t) { t = Math.Clamp(t, 0, 1); return t * t * (3 - 2 * t); }
         private static double Hash(int i, int k) { double v = Math.Sin(i * 127.1 + k * 311.7) * 43758.5453; return v - Math.Floor(v); }
 
-        private Glyph GlyphFor(string text, double size)
+        private Glyph GlyphFor(string text, double size, bool heavy = false)
         {
             int rounded = Math.Max(6, (int)Math.Round(size));
-            string key = rounded + ":" + text;
+            string key = (heavy ? "h" : "n") + rounded + ":" + text;
             if (_glyphs.TryGetValue(key, out var g)) return g;
             if (_glyphs.Count > 900) _glyphs.Clear();
-            var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Face, rounded, Brushes.White, 1.0);
+            var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, heavy ? Heavy : Face, rounded, Brushes.White, 1.0);
             var geo = ft.BuildGeometry(new Point(0, 0)) ?? Geometry.Empty;
             if (geo.CanFreeze) geo.Freeze();
             g = new Glyph { Geo = geo, Width = ft.WidthIncludingTrailingWhitespace, Height = ft.Height };
@@ -464,6 +472,7 @@ namespace Versalia.App
                 DrawIdle(dc, mon, cx, maxW);
                 return;
             }
+            if (Style != "duo") { DrawStyle(dc, mon); return; }
             var lines = f.Lyrics.Lines;
             int current = Math.Max(0, f.Sync.LineIndex);
             double since = Ease((_now - _lineChangedAt) / 0.45);

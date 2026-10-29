@@ -47,6 +47,8 @@ namespace Versalia.App
         public string Mode { get; set; } = "off";
         public int OffsetMs { get; set; } = 0;
         public string Palette { get; set; } = "auto";
+        /// <summary>duo, aurora, neon, poster u orbit.</summary>
+        public string Style { get; set; } = "duo";
         public int OverlayMonitor { get; set; } = -1;
         public bool ShownWelcome { get; set; } = false;
 

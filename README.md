@@ -43,7 +43,7 @@ Las pantallas se tratan como **un solo lienzo continuo**.
   Todo funciona con el escritorio desbloqueado.
 - **Reproductor:** se lee del sistema (controles multimedia de Windows), así que sirve para Apple Music para Windows,
   Spotify, etc. sin permisos extra.
-- Pendiente de portar: estilos Orbit, Aurora, Neon, Poster, lente y muro 3D; letras locales `.lrc`/TTML.
+- Portados: Dúo, Aurora, Neón, Póster y Órbita (menú «Estilo de letra»). Pendiente: lente, muro 3D y letras locales `.lrc`/TTML.
 
 ## Registros
 
