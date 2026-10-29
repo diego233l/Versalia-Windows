@@ -127,9 +127,13 @@ namespace Versalia.App
             var targets = overlay
                 ? new List<MonitorInfo> { PickOverlayMonitor() }
                 : _monitors;
+            int lyricIndex = Scene.Roles(_monitors).Lyric.Index;
             foreach (var m in targets)
             {
-                var window = new SceneWindow(_scene, m, overlay);
+                var window = overlay
+                    ? new SceneWindow(_scene, m, true)
+                    : new SceneWindow(_scene, m, false, delta => _director.ChangeOffset(delta), () => _settings.OffsetMs,
+                        showControls: m.Index == lyricIndex);
                 window.EscapePressed += OnEscape;
                 _windows.Add(window);
                 window.Show();
