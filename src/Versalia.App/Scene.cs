@@ -354,7 +354,7 @@ namespace Versalia.App
         {
             if (_mode == SceneMode.Overlay)
             {
-                if (OverlayMonitor()?.Index == mon.Index) DrawOverlay(dc, mon);
+                if (OverlayMonitor()?.Index == mon.Index) { DrawOverlay(dc, mon); DrawNotice(dc, mon); }
                 return;
             }
 
@@ -368,6 +368,24 @@ namespace Versalia.App
             if (dual && mon.Index == _stage.Index) DrawCoverPanel(dc, mon);
             if (mon.Index == _lyric.Index) DrawLyrics(dc, mon);
             DrawCometsAndRipples(dc, mon);
+            if (mon.Index == _lyric.Index) DrawNotice(dc, mon);
+        }
+
+        /// <summary>Aviso arriba de la pantalla de la letra (calibración de la sincronía).</summary>
+        private void DrawNotice(DrawingContext dc, MonitorInfo mon)
+        {
+            if (string.IsNullOrEmpty(_f.Notice)) return;
+            var g = GlyphFor(_f.Notice, mon.Height * 0.03);
+            double maxW = mon.Width * 0.9;
+            double scale = g.Width > maxW && g.Width > 0 ? maxW / g.Width : 1;
+            double w = g.Width * scale, h = g.Height * scale;
+            double cx = mon.X + mon.Width / 2, y = mon.Y + mon.Height * 0.05;
+            double pad = mon.Height * 0.014;
+            var box = new Rect(cx - w / 2 - pad * 1.6, y - pad, w + pad * 3.2, h + pad * 2);
+            double pulse = 0.85 + 0.15 * Math.Sin(_now * 4);
+            dc.DrawRoundedRectangle(B(new Rgb(0, 0, 0), 0.72), new Pen(B(_hi, 0.8 * pulse), Math.Max(1, mon.Height / 540.0)),
+                box, pad, pad);
+            DrawCentered(dc, g, cx, y, B(new Rgb(1, 1, 1), 0.95), maxW);
         }
 
         private void DrawBackdrop(DrawingContext dc, MonitorInfo mon)

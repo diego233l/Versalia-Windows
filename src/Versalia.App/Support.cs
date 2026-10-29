@@ -41,6 +41,56 @@ namespace Versalia.App
         }
     }
 
+    internal sealed class OffsetSample
+    {
+        public string Player { get; set; } = "";
+        public string Key { get; set; } = "";
+        public int Ms { get; set; }
+    }
+
+    /// <summary>Token de Apple Music del usuario, cifrado con su cuenta de Windows (DPAPI). Nunca va a settings.json ni al registro.</summary>
+    internal static class AppleToken
+    {
+        private static string FilePath => Path.Combine(Paths.Root, "apple-music.token");
+        private static string? _cached;
+        private static bool _loaded;
+
+        public static string? Get()
+        {
+            if (_loaded) return _cached;
+            _loaded = true;
+            try
+            {
+                if (!File.Exists(FilePath)) return _cached = null;
+                var bytes = System.Security.Cryptography.ProtectedData.Unprotect(File.ReadAllBytes(FilePath), null,
+                    System.Security.Cryptography.DataProtectionScope.CurrentUser);
+                _cached = System.Text.Encoding.UTF8.GetString(bytes);
+            }
+            catch (Exception e) { Log.Write("No se pudo leer el token de Apple Music: " + e.Message); _cached = null; }
+            return _cached;
+        }
+
+        public static bool IsSet => !string.IsNullOrEmpty(Get());
+
+        public static void Set(string? token)
+        {
+            try
+            {
+                Directory.CreateDirectory(Paths.Root);
+                if (string.IsNullOrEmpty(token)) { if (File.Exists(FilePath)) File.Delete(FilePath); }
+                else
+                {
+                    var bytes = System.Security.Cryptography.ProtectedData.Protect(System.Text.Encoding.UTF8.GetBytes(token), null,
+                        System.Security.Cryptography.DataProtectionScope.CurrentUser);
+                    File.WriteAllBytes(FilePath, bytes);
+                }
+                _cached = string.IsNullOrEmpty(token) ? null : token;
+                _loaded = true;
+            }
+            catch (Exception e) { Log.Write("No se pudo guardar el token de Apple Music: " + e.Message); }
+        }
+    }
+
     internal sealed class Settings
     {
         /// <summary>off, stage (escenario multipantalla) u overlay (solo letra, transparente).</summary>
@@ -53,6 +103,9 @@ namespace Versalia.App
         public bool ShownWelcome { get; set; } = false;
         /// <summary>Ajuste de sincronía guardado por canción (clave: título|artista normalizados), en ms.</summary>
         public System.Collections.Generic.Dictionary<string, int> TrackOffsets { get; set; } = new System.Collections.Generic.Dictionary<string, int>();
+
+        /// <summary>Ajustes recientes por reproductor: su mediana es el punto de partida de las canciones sin ajuste propio.</summary>
+        public System.Collections.Generic.List<OffsetSample> OffsetSamples { get; set; } = new System.Collections.Generic.List<OffsetSample>();
 
         public static Settings Load()
         {

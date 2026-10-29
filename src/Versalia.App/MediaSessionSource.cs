@@ -10,7 +10,7 @@ namespace Versalia.App
 {
     /// <summary>
     /// Lee la reproducción de cualquier app que use los controles multimedia de Windows (Apple Music, Spotify, navegador...).
-    /// Prefiere la app de Apple Music si está sonando. Consulta cada 600 ms; además reacciona a los eventos del sistema.
+    /// Prefiere la app de Apple Music si está sonando. Consulta cada 300 ms; además reacciona a los eventos del sistema.
     /// </summary>
     internal sealed class MediaSessionSource : IDisposable
     {
@@ -47,7 +47,7 @@ namespace Versalia.App
             {
                 try { await PollOnce(); }
                 catch (Exception e) { Log.Write("Lectura del reproductor: " + e.Message); }
-                for (int i = 0; i < 12 && !_wake && !_cts.IsCancellationRequested; i++) await Task.Delay(50);
+                for (int i = 0; i < 6 && !_wake && !_cts.IsCancellationRequested; i++) await Task.Delay(50);
                 _wake = false;
             }
         }
@@ -93,7 +93,11 @@ namespace Versalia.App
             };
 
             var props = await session.TryGetMediaPropertiesAsync();
+            // La línea de tiempo y la hora de captura se leen juntas: cualquier espera posterior (p. ej. leer la portada)
+            // no debe contarse como tiempo de canción, o la letra irá por detrás.
             var timeline = session.GetTimelineProperties();
+            double capturedAt = Monotonic.Now;
+            var utcNow = DateTimeOffset.UtcNow;
             var title = System.Net.WebUtility.HtmlDecode(props.Title ?? "");
             var artist = System.Net.WebUtility.HtmlDecode(props.Artist ?? "");
             var album = System.Net.WebUtility.HtmlDecode(props.AlbumTitle ?? "");
@@ -115,16 +119,30 @@ namespace Versalia.App
                 return;
             }
             _zeroDurationPolls = 0;
-            double positionMs = Math.Max(0, (timeline.Position - timeline.StartTime).TotalMilliseconds);
-            // Algunos reproductores (p. ej. vídeos del navegador) repiten la misma posición y marca de tiempo: no es una lectura nueva.
-            bool fresh = positionMs != _lastRawPositionMs || timeline.LastUpdatedTime != _lastRawUpdated;
-            _lastRawPositionMs = positionMs;
+            double rawMs = Math.Max(0, (timeline.Position - timeline.StartTime).TotalMilliseconds);
+            double positionMs = rawMs;
+            // Algunos reproductores repiten la misma posición y marca de tiempo: no es una lectura nueva.
+            bool fresh = rawMs != _lastRawPositionMs || timeline.LastUpdatedTime != _lastRawUpdated;
+            _lastRawPositionMs = rawMs;
             _lastRawUpdated = timeline.LastUpdatedTime;
-            if (state == PlaybackState.Playing)
+            double sinceUpdate = (utcNow - timeline.LastUpdatedTime).TotalMilliseconds;
+            // Una marca de tiempo en el futuro o absurda (hora local etiquetada como UTC, valor por defecto...) no sirve:
+            // entonces se usa la posición tal cual en el momento en que cambia.
+            bool stampValid = timeline.LastUpdatedTime.Year > 2000 && sinceUpdate > -1500 && sinceUpdate < 6 * 3600_000;
+            if (!stampValid && !_warnedStamp)
             {
-                double sinceUpdate = (DateTimeOffset.UtcNow - timeline.LastUpdatedTime).TotalMilliseconds;
-                if (sinceUpdate > 0) positionMs += sinceUpdate;
+                _warnedStamp = true;
+                Log.Write($"Aviso: el reproductor da una marca de tiempo no válida ({timeline.LastUpdatedTime:o}, {sinceUpdate:0} ms); se ignora.");
             }
+            bool resumedWithoutUpdate = state == PlaybackState.Playing && _lastState != PlaybackState.Playing && !fresh;
+            _lastState = state;
+            if (resumedWithoutUpdate)
+            {
+                // Al reanudar, si el reproductor no ha renovado la línea de tiempo, su marca es la de la pausa: sumar el
+                // tiempo desde entonces adelantaría la letra todo lo que duró la pausa. Se reanuda desde la posición tal cual.
+                fresh = true;
+            }
+            else if (state == PlaybackState.Playing && stampValid && sinceUpdate > 0) positionMs += sinceUpdate;
             if (durationMs > 0) positionMs = Math.Min(positionMs, durationMs);
 
             // «Conectando…» (sin artista ni duración) es un estado transitorio de Apple Music, no una pista.
@@ -143,7 +161,25 @@ namespace Versalia.App
                     if (artwork != null) _artworkTries = -1;
                 }
             }
-            Updated?.Invoke(new PlaybackSnapshot(state, track, positionMs, Monotonic.Now, fresh), artwork);
+            if (track != null && fresh) Diagnose(track, state, rawMs, sinceUpdate, positionMs);
+            Updated?.Invoke(new PlaybackSnapshot(state, track, positionMs, capturedAt, fresh, session.SourceAppUserModelId), artwork);
+        }
+
+        private bool _warnedStamp;
+        private PlaybackState _lastState = PlaybackState.Stopped;
+        private string _diagTrack = "";
+        private int _diagCount;
+        private double _diagLast;
+
+        /// <summary>Registra las primeras lecturas nuevas de cada canción y luego una cada 30 s, para ver cómo informa el reproductor.</summary>
+        private void Diagnose(TrackInfo track, PlaybackState state, double rawMs, double sinceUpdate, double positionMs)
+        {
+            if (_diagTrack != track.Id) { _diagTrack = track.Id; _diagCount = 0; }
+            double now = Monotonic.Now;
+            if (_diagCount >= 6 && now - _diagLast < 30) return;
+            _diagCount++;
+            _diagLast = now;
+            Log.Write($"Línea de tiempo: {state}, posición {rawMs / 1000:0.000} s, actualizada hace {sinceUpdate:0} ms → {positionMs / 1000:0.000} s");
         }
 
         private static async Task<byte[]?> ReadThumbnail(GlobalSystemMediaTransportControlsSessionMediaProperties props)

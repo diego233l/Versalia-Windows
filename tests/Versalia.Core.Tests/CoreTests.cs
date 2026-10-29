@@ -245,3 +245,142 @@ public class KrcTests
         Assert.Equal(300, line.Words[1].StartMs);
     }
 }
+
+public class TtmlTests
+{
+    private const string Syllable =
+        "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" timing=\"Word\"><body><div>" +
+        "<p begin=\"1.000\" end=\"3.500\"><span begin=\"1.000\" end=\"1.300\">Hel</span><span begin=\"1.300\" end=\"1.600\">lo</span> " +
+        "<span begin=\"1.700\" end=\"2.400\">world</span><span ttm:role=\"x-bg\"><span begin=\"2.5\" end=\"3\">(ooh)</span></span></p>" +
+        "<p begin=\"1:04.250\" end=\"1:06.000\"><span begin=\"1:04.250\" end=\"1:05.000\">Second</span></p>" +
+        "</div></body></tt>";
+
+    [Fact]
+    public void JoinsSyllablesAndSkipsBackgroundVocals()
+    {
+        var lyrics = TtmlParser.Parse(Syllable, "applemusic");
+        Assert.Equal(2, lyrics.Lines.Count);
+        var first = lyrics.Lines[0];
+        Assert.False(first.IsEstimated);
+        Assert.Equal("Hello world", first.Text);
+        Assert.Equal(1000, first.Words[0].StartMs);
+        Assert.Equal(1600, first.Words[0].EndMs);
+        Assert.Equal(1700, first.Words[1].StartMs);
+        Assert.Equal(64250, lyrics.Lines[1].StartMs);
+    }
+
+    [Fact]
+    public void LineLevelTtmlIsEstimated()
+    {
+        var lyrics = TtmlParser.Parse("<tt><body><div><p begin=\"00:00:02.000\" end=\"00:00:04.000\">Just a line</p></div></body></tt>");
+        Assert.Single(lyrics.Lines);
+        Assert.True(lyrics.IsEstimated);
+        Assert.Equal(3, lyrics.Lines[0].Words.Count);
+        Assert.Equal(2000, lyrics.Lines[0].StartMs);
+    }
+
+    [Theory]
+    [InlineData("12.5s", 12500)]
+    [InlineData("1500ms", 1500)]
+    [InlineData("01:02.250", 62250)]
+    [InlineData("1:00:00.000", 3600000)]
+    public void ParsesTimes(string text, int expected) => Assert.Equal(expected, TtmlParser.ParseTime(text));
+}
+
+public class CalibrationTests
+{
+    private static Lyrics Make() => LrcParser.Parse("[00:01.00]one\n[00:05.00]two\n[00:10.00]three\n[00:20.00]four");
+
+    [Fact]
+    public void PicksALineFarEnoughAhead()
+    {
+        Assert.Equal(2, SyncCalibration.TargetLine(Make(), 4500));
+        Assert.Equal(-1, SyncCalibration.TargetLine(Make(), 19000));
+    }
+
+    [Fact]
+    public void LateLyricsGetPositiveCorrection()
+    {
+        // La línea empieza en 10 s; al oírla (y pulsar) la letra solo iba por 7 s: hay que adelantarla ~3 s.
+        Assert.Equal(3100, SyncCalibration.TapCorrection(10000, 7000));
+        Assert.Equal(-1900, SyncCalibration.TapCorrection(10000, 12000));
+    }
+
+    [Fact]
+    public void LearnedIsTheMedian()
+    {
+        Assert.Null(SyncCalibration.Learned(new[] { 500 }));
+        Assert.Equal(600, SyncCalibration.Learned(new[] { 500, 700 }));
+        Assert.Equal(700, SyncCalibration.Learned(new[] { 9000, 700, 650 }));
+    }
+}
+
+public class AppleMusicTests
+{
+    private sealed class FakeHttp : IHttp
+    {
+        public Func<Uri, IDictionary<string, string>, (string, int)> Handler = (_, _) => ("", 404);
+        public Task<(string Body, int Status)> GetAsync(Uri url, IDictionary<string, string> headers, CancellationToken ct)
+            => Task.FromResult(Handler(url, headers));
+    }
+
+    private const string Jwt = "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiJ4In0.c2lnbmF0dXJl";
+
+    [Fact]
+    public async Task FindsSyllableLyricsWithBothTokens()
+    {
+        var seen = new List<string>();
+        var http = new FakeHttp
+        {
+            Handler = (url, headers) =>
+            {
+                var u = url.ToString();
+                seen.Add(u);
+                if (u.EndsWith("/us/browse")) return ("<script type=\"module\" src=\"/assets/index-abc123.js\"></script>", 200);
+                if (u.EndsWith("/assets/index-abc123.js")) return ($"var t=\"{Jwt}\";", 200);
+                Assert.Equal("Bearer " + Jwt, headers["Authorization"]);
+                Assert.Equal("user-token", headers["media-user-token"]);
+                if (u.Contains("/v1/me/storefront")) return ("{\"data\":[{\"id\":\"es\"}]}", 200);
+                if (u.Contains("/v1/catalog/es/search"))
+                    return ("{\"results\":{\"songs\":{\"data\":[{\"id\":\"42\",\"attributes\":{\"name\":\"Song\",\"artistName\":\"Artist\",\"durationInMillis\":200000}}]}}}", 200);
+                if (u.EndsWith("/v1/catalog/es/songs/42/syllable-lyrics"))
+                    return ("{\"data\":[{\"attributes\":{\"ttml\":\"<tt><body><div><p begin=\\\"1\\\" end=\\\"2\\\"><span begin=\\\"1\\\" end=\\\"2\\\">Hi</span></p></div></body></tt>\"}}]}", 200);
+                return ("", 404);
+            }
+        };
+        var provider = new AppleMusicProvider(() => "user-token", http, web: "https://web.test", api: "https://api.test");
+        var lyrics = await provider.FetchAsync(new TrackInfo("1", "Song", "Artist", "", 200_000));
+        Assert.NotNull(lyrics);
+        Assert.Equal("applemusic", lyrics!.Source);
+        Assert.False(lyrics.IsEstimated);
+        Assert.Equal("conectado", provider.Status);
+    }
+
+    [Fact]
+    public async Task RejectedTokenReturnsNullWithoutThrowing()
+    {
+        var http = new FakeHttp
+        {
+            Handler = (url, _) => url.ToString().EndsWith("/us/browse") ? ($"x \"{Jwt}\"", 200) : ("", 403)
+        };
+        var provider = new AppleMusicProvider(() => "bad", http, web: "https://web.test", api: "https://api.test");
+        Assert.Null(await provider.FetchAsync(new TrackInfo("1", "Song", "Artist", "", 200_000)));
+        Assert.StartsWith("token rechazado", provider.Status);
+    }
+
+    [Fact]
+    public async Task NoTokenMeansNoRequests()
+    {
+        int calls = 0;
+        var http = new FakeHttp { Handler = (_, _) => { calls++; return ("", 500); } };
+        var provider = new AppleMusicProvider(() => null, http);
+        Assert.Null(await provider.FetchAsync(new TrackInfo("1", "Song", "Artist", "", 200_000)));
+        Assert.Equal(0, calls);
+    }
+
+    [Theory]
+    [InlineData("media-user-token=AbC123;", "AbC123")]
+    [InlineData("  \"AbC123\" ", "AbC123")]
+    [InlineData("AbC123", "AbC123")]
+    public void CleansPastedToken(string pasted, string expected) => Assert.Equal(expected, AppleMusicProvider.CleanToken(pasted));
+}
