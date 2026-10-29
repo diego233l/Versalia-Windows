@@ -134,7 +134,15 @@ namespace Versalia.App
                 _warnedStamp = true;
                 Log.Write($"Aviso: el reproductor da una marca de tiempo no válida ({timeline.LastUpdatedTime:o}, {sinceUpdate:0} ms); se ignora.");
             }
-            if (state == PlaybackState.Playing && stampValid && sinceUpdate > 0) positionMs += sinceUpdate;
+            bool resumedWithoutUpdate = state == PlaybackState.Playing && _lastState != PlaybackState.Playing && !fresh;
+            _lastState = state;
+            if (resumedWithoutUpdate)
+            {
+                // Al reanudar, si el reproductor no ha renovado la línea de tiempo, su marca es la de la pausa: sumar el
+                // tiempo desde entonces adelantaría la letra todo lo que duró la pausa. Se reanuda desde la posición tal cual.
+                fresh = true;
+            }
+            else if (state == PlaybackState.Playing && stampValid && sinceUpdate > 0) positionMs += sinceUpdate;
             if (durationMs > 0) positionMs = Math.Min(positionMs, durationMs);
 
             // «Conectando…» (sin artista ni duración) es un estado transitorio de Apple Music, no una pista.
@@ -158,6 +166,7 @@ namespace Versalia.App
         }
 
         private bool _warnedStamp;
+        private PlaybackState _lastState = PlaybackState.Stopped;
         private string _diagTrack = "";
         private int _diagCount;
         private double _diagLast;
