@@ -15,6 +15,7 @@
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
     <ProjectReference Include="..\Versalia.Core\Versalia.Core.csproj" />
   </ItemGroup>
 </Project>

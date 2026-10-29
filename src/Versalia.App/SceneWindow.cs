@@ -42,20 +42,17 @@ namespace Versalia.App
         public SceneView View { get; }
         public event Action? EscapePressed;
 
-        private readonly Action<int>? _onOffset;
-        private readonly Func<int>? _getOffset;
+        private readonly ISyncControls? _sync;
         private readonly Border? _bar;
         private readonly TextBlock? _offsetLabel;
         private Point _lastMouse = new Point(-100, -100);
         private readonly DispatcherTimer _hideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
 
-        /// <param name="onOffset">Cambia la sincronía en ms (0 = restablecer). Null en la superposición transparente.</param>
+        /// <param name="sync">Sincronía de la canción. Null en la superposición transparente.</param>
         /// <param name="showControls">Muestra la barra de sincronía al mover el ratón (pantalla de la letra).</param>
-        public SceneWindow(Scene scene, MonitorInfo monitor, bool overlay, Action<int>? onOffset = null,
-            Func<int>? getOffset = null, bool showControls = false)
+        public SceneWindow(Scene scene, MonitorInfo monitor, bool overlay, ISyncControls? sync = null, bool showControls = false)
         {
-            _onOffset = onOffset;
-            _getOffset = getOffset;
+            _sync = sync;
             _monitor = monitor;
             _overlay = overlay;
             WindowStyle = WindowStyle.None;
@@ -71,7 +68,7 @@ namespace Versalia.App
             View = new SceneView(scene, monitor);
             var root = new Grid();
             root.Children.Add(View);
-            if (!overlay && showControls && onOffset != null)
+            if (!overlay && showControls && sync != null)
             {
                 _offsetLabel = new TextBlock
                 {
@@ -85,6 +82,13 @@ namespace Versalia.App
                 row.Children.Add(MakeButton("+0,1 s", 100));
                 row.Children.Add(MakeButton("Adelantar 0,5 s", 500));
                 row.Children.Add(MakeButton("Restablecer", 0));
+                var calibrate = MakeButton("Sincronizar al oído (Espacio)", 0);
+                calibrate.Background = new SolidColorBrush(Color.FromArgb(150, 60, 255, 176));
+                calibrate.Foreground = Brushes.Black;
+                calibrate.FontWeight = FontWeights.SemiBold;
+                calibrate.Click -= OnOffsetClick;
+                calibrate.Click += (_, _) => Calibrate();
+                row.Children.Add(calibrate);
                 _bar = new Border
                 {
                     Background = new SolidColorBrush(Color.FromArgb(200, 12, 12, 18)),
@@ -102,7 +106,7 @@ namespace Versalia.App
                 Cursor = Cursors.None;
                 _hideTimer.Tick += (_, _) =>
                 {
-                    if (_bar != null && _bar.IsMouseOver) return;
+                    if (_bar != null && (_bar.IsMouseOver || (_sync?.Calibrating ?? false))) return;
                     _hideTimer.Stop();
                     Cursor = Cursors.None;
                     if (_bar != null) _bar.Visibility = Visibility.Collapsed;
@@ -130,6 +134,7 @@ namespace Versalia.App
             KeyDown += (_, e) =>
             {
                 if (e.Key == Key.Escape) EscapePressed?.Invoke();
+                else if (e.Key == Key.Space) Calibrate();
                 else if (e.Key == Key.Right) Offset(100);
                 else if (e.Key == Key.Left) Offset(-100);
                 else if (e.Key == Key.Back || e.Key == Key.D0 || e.Key == Key.NumPad0) Offset(0);
@@ -144,24 +149,39 @@ namespace Versalia.App
                 Foreground = Brushes.White, Background = new SolidColorBrush(Color.FromArgb(60, 255, 255, 255)),
                 BorderThickness = new Thickness(0), Cursor = Cursors.Hand, Focusable = false,
             };
-            button.Click += (_, _) => Offset(delta);
+            button.Tag = delta;
+            button.Click += OnOffsetClick;
             return button;
+        }
+
+        private void OnOffsetClick(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button b && b.Tag is int delta) Offset(delta);
         }
 
         private void Offset(int delta)
         {
-            if (_onOffset == null) return;
-            _onOffset(delta);
+            if (_sync == null) return;
+            _sync.ChangeTrackOffset(delta);
+            UpdateLabel();
+            ShowControls();
+        }
+
+        private void Calibrate()
+        {
+            if (_sync == null) return;
+            _sync.Calibrate();
             UpdateLabel();
             ShowControls();
         }
 
         private void UpdateLabel()
         {
-            if (_offsetLabel == null || _getOffset == null) return;
-            int ms = _getOffset();
+            if (_offsetLabel == null || _sync == null) return;
+            int ms = _sync.TrackOffsetMs;
             string sign = ms > 0 ? "+" : ms < 0 ? "−" : "";
-            _offsetLabel.Text = ms == 0 ? "Esta canción: 0 ms" : $"Esta canción: {sign}{Math.Abs(ms)} ms";
+            string value = ms == 0 ? "0 ms" : $"{sign}{Math.Abs(ms)} ms";
+            _offsetLabel.Text = _sync.OffsetIsLearned ? $"Esta canción: {value} (aprendido)" : $"Esta canción: {value}";
         }
 
         private void ShowControls()

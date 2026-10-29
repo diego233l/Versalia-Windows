@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,10 +25,23 @@ namespace Versalia.App
         public int LastStarted = -1;
         public Palette Palette = ThemePresets.Default;
         public long LyricsId;
+        /// <summary>Aviso breve en la pantalla de la letra (calibración, ajuste aplicado...).</summary>
+        public string? Notice;
+        public double NoticeUntil;
+    }
+
+    /// <summary>Lo que la barra de sincronía puede consultar y cambiar.</summary>
+    internal interface ISyncControls
+    {
+        int TrackOffsetMs { get; }
+        bool OffsetIsLearned { get; }
+        bool Calibrating { get; }
+        void ChangeTrackOffset(int deltaMs);
+        void Calibrate();
     }
 
     /// <summary>Une reproductor, letras, reloj y sincronía. Todo se llama desde el hilo de la interfaz.</summary>
-    internal sealed class Director
+    internal sealed class Director : ISyncControls
     {
         private readonly LyricsService _service;
         private readonly Settings _settings;
@@ -38,6 +52,11 @@ namespace Versalia.App
         private Palette? _artPalette;
         private long _lyricsCounter;
         private int _trackOffset;
+        private bool _offsetLearned;
+        private string _player = "";
+        private int _calibrationLine = -1;
+        private double _calibrationStarted;
+        private readonly AppleMusicProvider _apple;
         // Estadística de la deriva del reloj para el registro.
         private int _statReadings, _statCorrections, _statSeeks;
         private double _statAbsDrift, _statMaxDrift, _statLastLog;
@@ -45,18 +64,32 @@ namespace Versalia.App
         public Director(Settings settings)
         {
             _settings = settings;
+            // Apple Music primero (si hay token): sus tiempos son los de la misma versión que suena.
+            _apple = new AppleMusicProvider(AppleToken.Get, log: Log.Write);
             var provider = new CompositeLyricsProvider(
-                new ILyricsProvider[] { new NetEaseProvider(log: Log.Write), new KugouProvider(log: Log.Write), new LrclibProvider() }, Log.Write);
+                new ILyricsProvider[] { _apple, new NetEaseProvider(log: Log.Write), new KugouProvider(log: Log.Write), new LrclibProvider() }, Log.Write);
             _service = new LyricsService(provider, new LyricsCache(Paths.Cache));
             _frame.Status = LyricsStatus.NoTrack;
         }
 
         public TrackInfo? Track => _frame.Track;
+        public string AppleStatus => _apple.Status;
+
+        /// <summary>Vuelve a buscar la letra de la canción actual (p. ej. tras conectar Apple Music).</summary>
+        public void ReloadLyrics()
+        {
+            if (_frame.Track != null) StartTrack(_frame.Track);
+        }
 
         public void OnSnapshot(PlaybackSnapshot snapshot, byte[]? artwork)
         {
             bool playing = snapshot.State == PlaybackState.Playing;
             _frame.Playing = playing;
+            if (snapshot.Player.Length > 0 && snapshot.Player != _player)
+            {
+                _player = snapshot.Player;
+                if (_frame.Track != null) LoadTrackOffset();
+            }
 
             if (snapshot.Track == null)
             {
@@ -113,8 +146,11 @@ namespace Versalia.App
             _fetch?.Cancel();
             _fetch = new CancellationTokenSource();
             _frame.Track = track;
-            _trackOffset = TrackOffsetMs;
-            if (_trackOffset != 0) Log.Write($"Usando el ajuste guardado de esta canción: {_trackOffset:+#;-#;0} ms");
+            _calibrationLine = -1;
+            _frame.Notice = null;
+            LoadTrackOffset();
+            if (_trackOffset != 0)
+                Log.Write($"Ajuste de sincronía {(_offsetLearned ? "aprendido" : "guardado para esta canción")}: {_trackOffset:+#;-#;0} ms");
             _frame.Artwork = null;
             _frame.Lyrics = null; _frame.Words = null;
             _frame.Status = LyricsStatus.Loading;
@@ -201,24 +237,94 @@ namespace Versalia.App
         private static string TrackKey(TrackInfo t) =>
             TrackMatcher.NormalizeTitle(t.Title) + "|" + TrackMatcher.NormalizeArtist(t.Artist);
 
-        /// <summary>Ajuste de esta canción (se suma al general). Se guarda y se recupera al volver a sonar.</summary>
-        public int TrackOffsetMs =>
-            _frame.Track != null && _settings.TrackOffsets.TryGetValue(TrackKey(_frame.Track), out var v) ? v : 0;
+        /// <summary>Ajuste propio de la canción si existe; si no, la mediana de los ajustes hechos con este reproductor.</summary>
+        private void LoadTrackOffset()
+        {
+            if (_frame.Track == null) { _trackOffset = 0; _offsetLearned = false; return; }
+            var key = TrackKey(_frame.Track);
+            if (_settings.TrackOffsets.TryGetValue(key, out var own)) { _trackOffset = own; _offsetLearned = false; return; }
+            var learned = SyncCalibration.Learned(_settings.OffsetSamples.Where(x => x.Player == _player && x.Key != key).Select(x => x.Ms));
+            _trackOffset = learned ?? 0;
+            _offsetLearned = learned.HasValue && learned.Value != 0;
+        }
+
+        /// <summary>Ajuste en uso para esta canción (se suma al general).</summary>
+        public int TrackOffsetMs => _trackOffset;
+        public bool OffsetIsLearned => _offsetLearned;
+        public bool Calibrating => _calibrationLine >= 0 && Monotonic.Now - _calibrationStarted < 40;
 
         public void ChangeTrackOffset(int deltaMs)
         {
             if (_frame.Track == null) return;
             var key = TrackKey(_frame.Track);
-            int value = deltaMs == 0 ? 0 : Math.Clamp(TrackOffsetMs + deltaMs, -3000, 3000);
-            if (value == 0) _settings.TrackOffsets.Remove(key); else _settings.TrackOffsets[key] = value;
-            _trackOffset = value;
+            if (deltaMs == 0)
+            {
+                // Restablecer: la canción vuelve al ajuste aprendido.
+                _settings.TrackOffsets.Remove(key);
+                _settings.OffsetSamples.RemoveAll(x => x.Key == key);
+                LoadTrackOffset();
+            }
+            else
+            {
+                int value = Math.Clamp(_trackOffset + deltaMs, -SyncCalibration.MaxCorrectionMs, SyncCalibration.MaxCorrectionMs);
+                _settings.TrackOffsets[key] = value;
+                _settings.OffsetSamples.RemoveAll(x => x.Key == key && x.Player == _player);
+                _settings.OffsetSamples.Add(new OffsetSample { Player = _player, Key = key, Ms = value });
+                while (_settings.OffsetSamples.Count > 40) _settings.OffsetSamples.RemoveAt(0);
+                _trackOffset = value;
+                _offsetLearned = false;
+            }
             _settings.Save();
-            Log.Write($"Sincronía de «{_frame.Track.Title}»: {value:+#;-#;0} ms");
+            Log.Write($"Sincronía de «{_frame.Track.Title}»: {_trackOffset:+#;-#;0} ms{(_offsetLearned ? " (aprendido)" : "")}");
         }
+
+        private double DisplayedPosition(double now) => _clock.PositionMs(now) + _settings.OffsetMs + _trackOffset;
+
+        private void Notice(string text, double seconds)
+        {
+            _frame.Notice = text;
+            _frame.NoticeUntil = Monotonic.Now + seconds;
+        }
+
+        /// <summary>
+        /// Primera pulsación: elige una línea que aún no ha sonado y la muestra. Segunda pulsación (cuando se oye empezar esa
+        /// línea): calcula cuánto va desfasada la letra y lo guarda para esta canción y como referencia para las demás.
+        /// </summary>
+        public void Calibrate()
+        {
+            double now = Monotonic.Now;
+            var lyrics = _frame.Lyrics;
+            if (_frame.Status != LyricsStatus.Ready || lyrics == null) { Notice("Todavía no hay letra para sincronizar", 3); return; }
+            double position = DisplayedPosition(now);
+            if (!Calibrating || _calibrationLine >= lyrics.Lines.Count)
+            {
+                int target = SyncCalibration.TargetLine(lyrics, position);
+                if (target < 0) { Notice("No quedan líneas en esta canción para sincronizar", 3); return; }
+                _calibrationLine = target;
+                _calibrationStarted = now;
+                Notice($"Pulsa otra vez (Espacio o Ctrl+Alt+S) justo cuando oigas: «{lyrics.Lines[target].Text}»", 40);
+                Log.Write($"Calibración: esperando la línea {target} («{lyrics.Lines[target].Text}», {lyrics.Lines[target].StartMs} ms)");
+                return;
+            }
+            var line = lyrics.Lines[_calibrationLine];
+            int correction = SyncCalibration.TapCorrection(line.StartMs, position);
+            _calibrationLine = -1;
+            Log.Write($"Calibración: pulsado en {position:0} ms, la línea empieza en {line.StartMs} ms → corrección {correction:+#;-#;0} ms");
+            if (Math.Abs(correction) > SyncCalibration.MaxCorrectionMs)
+            {
+                Notice("Demasiado desfase: pulsa Espacio para probar otra vez", 4);
+                return;
+            }
+            ChangeTrackOffset(correction == 0 ? 1 : correction);
+            Notice($"Sincronizado: {Format(_trackOffset)}. Se recordará para esta canción y servirá de base para las demás.", 5);
+        }
+
+        private static string Format(int ms) => ms == 0 ? "0 s" : $"{(ms > 0 ? "+" : "−")}{Math.Abs(ms) / 1000.0:0.00} s";
 
         public Frame Tick(double now)
         {
-            double position = _clock.PositionMs(now) + _settings.OffsetMs + _trackOffset;
+            double position = DisplayedPosition(now);
+            if (_frame.Notice != null && now > _frame.NoticeUntil) _frame.Notice = null;
             _frame.PositionMs = position;
             if (_frame.Status == LyricsStatus.Ready && _cursor != null && _frame.Words != null)
             {

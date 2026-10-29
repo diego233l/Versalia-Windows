@@ -29,7 +29,9 @@ public enum PlaybackState { Playing, Paused, Stopped }
 
 /// <summary>Lectura puntual del reproductor. <c>CapturedAt</c> en segundos del reloj monotónico.</summary>
 /// <param name="PositionFresh">false si el reproductor repite la misma posición que en la lectura anterior (congelada).</param>
-public sealed record PlaybackSnapshot(PlaybackState State, TrackInfo? Track, double PositionMs, double CapturedAt, bool PositionFresh = true);
+/// <param name="Player">Identificador de la app que suena (Apple Music, Spotify...).</param>
+public sealed record PlaybackSnapshot(PlaybackState State, TrackInfo? Track, double PositionMs, double CapturedAt,
+    bool PositionFresh = true, string Player = "");
 
 public readonly record struct Rgb(double R, double G, double B)
 {

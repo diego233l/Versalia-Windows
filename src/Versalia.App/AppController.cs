@@ -15,7 +15,7 @@ namespace Versalia.App
     /// <summary>Bandeja del sistema, atajos, ventanas por monitor y bucle de dibujo.</summary>
     internal sealed class AppController : IDisposable
     {
-        private const int HotkeyStage = 1, HotkeyOverlay = 2;
+        private const int HotkeyStage = 1, HotkeyOverlay = 2, HotkeyCalibrate = 3;
         private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
         private readonly Settings _settings = Settings.Load();
@@ -54,6 +54,8 @@ namespace Versalia.App
                 Log.Write("No se pudo registrar Ctrl+Alt+V (otra app lo usa).");
             if (!Native.RegisterHotKey(handle, HotkeyOverlay, Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT, (uint)Forms.Keys.L))
                 Log.Write("No se pudo registrar Ctrl+Alt+L (otra app lo usa).");
+            if (!Native.RegisterHotKey(handle, HotkeyCalibrate, Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT, (uint)Forms.Keys.S))
+                Log.Write("No se pudo registrar Ctrl+Alt+S (otra app lo usa).");
 
             _displayDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
             _displayDebounce.Tick += (_, _) => { _displayDebounce.Stop(); RebuildWindows(); };
@@ -89,6 +91,7 @@ namespace Versalia.App
                 int id = wParam.ToInt32();
                 if (id == HotkeyStage) ToggleMode("stage");
                 else if (id == HotkeyOverlay) ToggleMode("overlay");
+                else if (id == HotkeyCalibrate) _director.Calibrate();
                 handled = true;
             }
             return IntPtr.Zero;
@@ -132,8 +135,7 @@ namespace Versalia.App
             {
                 var window = overlay
                     ? new SceneWindow(_scene, m, true)
-                    : new SceneWindow(_scene, m, false, delta => _director.ChangeTrackOffset(delta), () => _director.TrackOffsetMs,
-                        showControls: m.Index == lyricIndex);
+                    : new SceneWindow(_scene, m, false, _director, showControls: m.Index == lyricIndex);
                 window.EscapePressed += OnEscape;
                 _windows.Add(window);
                 window.Show();
@@ -239,7 +241,20 @@ namespace Versalia.App
             sync.DropDownItems.Add(Item("Adelantar la letra  +100 ms", () => _director.ChangeOffset(100)));
             sync.DropDownItems.Add(Item("Retrasar la letra  −100 ms", () => _director.ChangeOffset(-100)));
             sync.DropDownItems.Add(Item("Restablecer (0 ms)", () => _director.ChangeOffset(0)));
+            sync.DropDownItems.Add(new Forms.ToolStripSeparator());
+            sync.DropDownItems.Add(Item("Sincronizar al oído   Ctrl+Alt+S (dos veces)", () => _director.Calibrate()));
             menu.Items.Add(sync);
+
+            var apple = new Forms.ToolStripMenuItem(AppleToken.IsSet
+                ? $"Letras de Apple Music: {_director.AppleStatus}"
+                : "Letras de Apple Music: sin conectar");
+            apple.DropDownItems.Add(Item(AppleToken.IsSet ? "Cambiar el token…" : "Conectar con mi cuenta…", ConnectApple));
+            if (AppleToken.IsSet) apple.DropDownItems.Add(Item("Desconectar", () =>
+            {
+                AppleToken.Set(null);
+                Log.Write("Apple Music desconectado.");
+            }));
+            menu.Items.Add(apple);
             menu.Items.Add(new Forms.ToolStripSeparator());
 
             menu.Items.Add(Item("Buscar actualización…", CheckForUpdate));
@@ -254,6 +269,18 @@ namespace Versalia.App
             var script = System.IO.Path.Combine(AppContext.BaseDirectory, "Actualizar-Versalia.ps1");
             if (!System.IO.File.Exists(script)) { Log.Write("Falta Actualizar-Versalia.ps1 junto al programa."); return; }
             Process.Start(new ProcessStartInfo("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\"") { UseShellExecute = true });
+        }
+
+        private void ConnectApple()
+        {
+            var dialog = new AppleTokenWindow();
+            if (dialog.ShowDialog() != true || string.IsNullOrEmpty(dialog.Token)) return;
+            AppleToken.Set(dialog.Token);
+            Log.Write($"Apple Music conectado (token de {dialog.Token.Length} caracteres).");
+            // Las letras guardadas antes (de otras fuentes) se descartan para que se pidan a Apple.
+            try { if (System.IO.Directory.Exists(Paths.Cache)) System.IO.Directory.Delete(Paths.Cache, true); }
+            catch (Exception e) { Log.Write("No se pudo vaciar la caché: " + e.Message); }
+            _director.ReloadLyrics();
         }
 
         private void SetPalette(string id) { _settings.Palette = id; _settings.Save(); }
