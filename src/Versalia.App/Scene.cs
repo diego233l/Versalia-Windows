@@ -77,11 +77,12 @@ namespace Versalia.App
             _mode = mode;
             _overlayIndex = overlayIndex;
 
+            // Los roles se recalculan siempre: las ventanas se recrean con objetos de monitor nuevos al abrir y cerrar el modo.
+            AssignRoles();
             var signature = Signature(monitors, mode, overlayIndex);
             if (signature != _layoutSignature)
             {
                 _layoutSignature = signature;
-                AssignRoles();
                 _layouts.Clear(); _groupLayouts.Clear();
                 _glyphs.Clear();
             }
@@ -346,7 +347,7 @@ namespace Versalia.App
         {
             if (_mode == SceneMode.Overlay)
             {
-                if (OverlayMonitor() == mon) DrawOverlay(dc, mon);
+                if (OverlayMonitor()?.Index == mon.Index) DrawOverlay(dc, mon);
                 return;
             }
 
@@ -356,9 +357,9 @@ namespace Versalia.App
 
             if (_lyric == null || _stage == null) return;
             bool dual = Dual;
-            if (mon == _stage) { DrawConstellation(dc, mon, dual ? 1.0 : 0.55, labels: dual); }
-            if (dual && mon == _stage) DrawCoverPanel(dc, mon);
-            if (mon == _lyric) DrawLyrics(dc, mon);
+            if (mon.Index == _stage.Index) { DrawConstellation(dc, mon, dual ? 1.0 : 0.55, labels: dual); }
+            if (dual && mon.Index == _stage.Index) DrawCoverPanel(dc, mon);
+            if (mon.Index == _lyric.Index) DrawLyrics(dc, mon);
             DrawCometsAndRipples(dc, mon);
         }
 
