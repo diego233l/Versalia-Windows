@@ -52,19 +52,26 @@ namespace Versalia.App
             }
         }
 
+        private string _lastSessionIds = "";
+
+        /// <summary>Solo Apple Music y Spotify; navegadores, vídeos y demás se ignoran.</summary>
+        private static bool IsSupported(GlobalSystemMediaTransportControlsSession s) =>
+            s.SourceAppUserModelId.IndexOf("AppleMusic", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            s.SourceAppUserModelId.IndexOf("Spotify", StringComparison.OrdinalIgnoreCase) >= 0;
+
         private GlobalSystemMediaTransportControlsSession? Choose()
         {
-            var sessions = _manager!.GetSessions().ToList();
-            bool IsPlaying(GlobalSystemMediaTransportControlsSession s) =>
-                s.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
-            bool IsMusicApp(GlobalSystemMediaTransportControlsSession s) =>
-                s.SourceAppUserModelId.IndexOf("AppleMusic", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                s.SourceAppUserModelId.IndexOf("Apple", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                s.SourceAppUserModelId.IndexOf("Spotify", StringComparison.OrdinalIgnoreCase) >= 0;
-            return sessions.FirstOrDefault(s => IsMusicApp(s) && IsPlaying(s))
-                   ?? sessions.FirstOrDefault(IsPlaying)
-                   ?? sessions.FirstOrDefault(IsMusicApp)
-                   ?? _manager.GetCurrentSession();
+            var all = _manager!.GetSessions().ToList();
+            var ids = string.Join(", ", all.Select(s => s.SourceAppUserModelId));
+            if (ids != _lastSessionIds)
+            {
+                _lastSessionIds = ids;
+                Log.Write("Reproductores del sistema: " + (ids.Length == 0 ? "(ninguno)" : ids));
+            }
+            var sessions = all.Where(IsSupported).ToList();
+            return sessions.FirstOrDefault(s => s.GetPlaybackInfo().PlaybackStatus ==
+                       GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+                   ?? sessions.FirstOrDefault();
         }
 
         private async Task PollOnce()

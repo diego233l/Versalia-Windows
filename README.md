@@ -1,6 +1,6 @@
 # Versalia para Windows 11
 
-Letra de la canción que suena (Apple Music, Spotify, navegador…) con cada palabra iluminada justo cuando se canta,
+Letra de la canción que suena (Apple Music o Spotify) con cada palabra iluminada justo cuando se canta,
 pensada para **varias pantallas**. Es el port a Windows de [Versalia para macOS](https://github.com/diego233l/Versalia).
 
 ## Instalar (PowerShell, una sola línea)
@@ -50,7 +50,7 @@ Las pantallas se tratan como **un solo lienzo continuo**.
 - **Pantalla de bloqueo:** Windows no permite a una app dibujar sobre la pantalla de bloqueo, así que no existe ese modo.
   Todo funciona con el escritorio desbloqueado.
 - **Reproductor:** se lee del sistema (controles multimedia de Windows), así que sirve para Apple Music para Windows,
-  Spotify, etc. sin permisos extra.
+  Spotify sin permisos extra (se ignoran navegadores y vídeos).
 - Portados: Dúo, Aurora, Neón, Póster y Órbita (menú «Estilo de letra»). Pendiente: lente, muro 3D y letras locales `.lrc`/TTML.
 
 ## Registros
