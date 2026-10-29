@@ -217,3 +217,31 @@ public class PaletteTests
         Assert.Null(PaletteExtractor.FromBgra(pixels, 16));
     }
 }
+
+public class KrcTests
+{
+    private const string Sample = "[ar:Artist]\n[1000,2000]<0,500,0>Hel<500,500,0>lo <1000,1000,0>world\n";
+
+    [Fact]
+    public void ParsesRelativeWordTimes()
+    {
+        var line = Assert.Single(KrcParser.Parse(Sample).Lines);
+        Assert.Equal(new LyricWord("Hello", 1000, 2000), line.Words[0]);
+        Assert.Equal(new LyricWord("world", 2000, 3000), line.Words[1]);
+        Assert.False(line.IsEstimated);
+    }
+
+    [Fact]
+    public void DecodesEncryptedPayload()
+    {
+        Assert.Equal(Sample, KrcParser.Decode(KrcParser.Encode(Sample)));
+    }
+
+    [Fact]
+    public void YrcStillParsesAfterRefactor()
+    {
+        var line = Assert.Single(YrcParser.Parse("[0,900](0,300,0)a (300,600,0)b").Lines);
+        Assert.Equal(2, line.Words.Count);
+        Assert.Equal(300, line.Words[1].StartMs);
+    }
+}

@@ -51,6 +51,8 @@ namespace Versalia.App
         public string Style { get; set; } = "duo";
         public int OverlayMonitor { get; set; } = -1;
         public bool ShownWelcome { get; set; } = false;
+        /// <summary>Ajuste de sincronía guardado por canción (clave: título|artista normalizados), en ms.</summary>
+        public System.Collections.Generic.Dictionary<string, int> TrackOffsets { get; set; } = new System.Collections.Generic.Dictionary<string, int>();
 
         public static Settings Load()
         {

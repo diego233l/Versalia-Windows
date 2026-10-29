@@ -143,8 +143,15 @@ namespace Versalia.App
             if (_monitors.Count == 0) { _stage = _lyric = null; _desk = Rect.Empty; return; }
             _desk = _monitors[0].Rect;
             foreach (var m in _monitors) _desk = Rect.Union(_desk, m.Rect);
-            _stage = _monitors.OrderByDescending(m => m.Area).ThenBy(m => m.X).First();
-            _lyric = _monitors.Where(m => m != _stage).OrderByDescending(m => m.Area).ThenByDescending(m => m.X).FirstOrDefault() ?? _stage;
+            (_stage, _lyric) = Roles(_monitors);
+        }
+
+        /// <summary>Pantalla grande = escenario; la siguiente más grande = letra (la misma si solo hay una).</summary>
+        public static (MonitorInfo Stage, MonitorInfo Lyric) Roles(IReadOnlyList<MonitorInfo> monitors)
+        {
+            var stage = monitors.OrderByDescending(m => m.Area).ThenBy(m => m.X).First();
+            var lyric = monitors.Where(m => m.Index != stage.Index).OrderByDescending(m => m.Area).ThenByDescending(m => m.X).FirstOrDefault() ?? stage;
+            return (stage, lyric);
         }
 
         private bool Dual => _stage != null && _lyric != null && _stage != _lyric;

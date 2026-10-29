@@ -30,6 +30,8 @@ Aparece un icono verde con una **V** junto al reloj (pulsa `^` si está oculto).
 | `Ctrl+Alt+V` (o clic en el icono) | **Escenario «Dúo»** en todas las pantallas. `Esc` para salir. |
 | `Ctrl+Alt+L` | **Letra flotante** transparente sobre una pantalla (los clics la atraviesan). |
 
+En el escenario, mueve el ratón sobre la pantalla de la letra para ver la **barra de sincronía** (adelantar/retrasar 0,1 o 0,5 s). También: rueda del ratón (±50 ms), flechas ← → (±100 ms) y `0` para restablecer.
+
 Clic derecho en el icono: colores, sincronía (±100 ms), pantalla de la letra flotante, iniciar con Windows, carpeta de registros.
 
 ## El modo «Dúo» (multipantalla)
