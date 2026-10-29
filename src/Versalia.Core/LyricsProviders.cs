@@ -158,17 +158,20 @@ public sealed class NetEaseProvider : ILyricsProvider
     private readonly IHttp _http;
     private readonly string _baseUrl;
 
-    public NetEaseProvider(IHttp? http = null, string baseUrl = "https://music.163.com")
+    private readonly Action<string> _log;
+
+    public NetEaseProvider(IHttp? http = null, string baseUrl = "https://music.163.com", Action<string>? log = null)
     {
         _http = http ?? new HttpClientAdapter(5);
         _baseUrl = baseUrl;
+        _log = log ?? (_ => { });
     }
 
     public async Task<Lyrics?> FetchAsync(TrackInfo track, CancellationToken ct = default)
     {
         try { return await Lookup(track, ct).ConfigureAwait(false); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch { return null; }
+        catch (Exception e) { _log("netease: fallo interno " + e.Message); return null; }
     }
 
     private Task<(string Body, int Status)> Request(string path, (string, string)[] query, CancellationToken ct) =>
@@ -180,33 +183,52 @@ public sealed class NetEaseProvider : ILyricsProvider
 
     private async Task<Lyrics?> Lookup(TrackInfo track, CancellationToken ct)
     {
-        var (searchBody, searchStatus) = await Request("api/search/get",
-            new[] { ("s", $"{track.Title} {track.Artist}"), ("type", "1"), ("limit", "10") }, ct).ConfigureAwait(false);
-        if (searchStatus != 200) return null;
-        using var doc = JsonDocument.Parse(searchBody);
-        if (!doc.RootElement.TryGetProperty("result", out var result) || !result.TryGetProperty("songs", out var songs)) return null;
+        var title = TrackMatcher.SearchTitle(track.Title);
+        var queries = new List<string> { $"{title} {track.Artist}".Trim() };
+        if (title.Length > 0 && !queries.Contains(title)) queries.Add(title);
 
         var candidates = new List<(long Id, int Duration)>();
-        foreach (var song in songs.EnumerateArray())
+        foreach (var query in queries)
         {
-            string name = song.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-            int duration = song.TryGetProperty("duration", out var d) && d.TryGetInt32(out var di) ? di : 0;
-            var artists = song.TryGetProperty("artists", out var a)
-                ? string.Join(", ", a.EnumerateArray().Select(x => x.TryGetProperty("name", out var an) ? an.GetString() ?? "" : ""))
-                : "";
-            if (TrackMatcher.Matches(track, name, artists, duration))
-                candidates.Add((song.GetProperty("id").GetInt64(), duration));
+            var (searchBody, searchStatus) = await Request("api/search/get",
+                new[] { ("s", query), ("type", "1"), ("limit", "20") }, ct).ConfigureAwait(false);
+            if (searchStatus != 200) { _log($"netease: búsqueda «{query}» respondió {searchStatus}"); continue; }
+            using var doc = JsonDocument.Parse(searchBody);
+            if (!doc.RootElement.TryGetProperty("result", out var result) || !result.TryGetProperty("songs", out var songs))
+            {
+                _log($"netease: búsqueda «{query}» sin resultados");
+                continue;
+            }
+            int total = 0;
+            foreach (var song in songs.EnumerateArray())
+            {
+                total++;
+                string name = song.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                int duration = song.TryGetProperty("duration", out var d) && d.TryGetInt32(out var di) ? di : 0;
+                var artists = song.TryGetProperty("artists", out var a)
+                    ? string.Join(", ", a.EnumerateArray().Select(x => x.TryGetProperty("name", out var an) ? an.GetString() ?? "" : ""))
+                    : "";
+                if (TrackMatcher.Matches(track, name, artists, duration))
+                    candidates.Add((song.GetProperty("id").GetInt64(), duration));
+            }
+            _log($"netease: «{query}» → {total} resultados, {candidates.Count} coinciden");
+            if (candidates.Count > 0) break;
         }
-        foreach (var c in candidates.OrderBy(c => Math.Abs(c.Duration - track.DurationMs)).Take(2))
+
+        foreach (var c in candidates.OrderBy(c => Math.Abs(c.Duration - track.DurationMs)).Take(3))
         {
             var (body, status) = await Request("api/song/lyric/v1", new[]
             {
                 ("id", c.Id.ToString()), ("cp", "false"), ("lv", "0"), ("tv", "0"), ("rv", "0"),
                 ("kv", "0"), ("yv", "0"), ("ytv", "0"), ("yrv", "0"),
             }, ct).ConfigureAwait(false);
-            if (status != 200) continue;
+            if (status != 200) { _log($"netease: letra {c.Id} respondió {status}"); continue; }
             using var lyricDoc = JsonDocument.Parse(body);
-            if (!lyricDoc.RootElement.TryGetProperty("yrc", out var yrc) || !yrc.TryGetProperty("lyric", out var lyric)) continue;
+            if (!lyricDoc.RootElement.TryGetProperty("yrc", out var yrc) || !yrc.TryGetProperty("lyric", out var lyric))
+            {
+                _log($"netease: la canción {c.Id} no tiene letra por palabra");
+                continue;
+            }
             var text = lyric.GetString();
             if (string.IsNullOrEmpty(text)) continue;
             var lyrics = YrcParser.Parse(text, Id);

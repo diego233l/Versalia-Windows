@@ -25,6 +25,15 @@ public static class TrackMatcher
         return result.Length == 0 ? Simplify(title) : result;
     }
 
+    /// <summary>Título limpio para buscar (conserva acentos y mayúsculas): sin (feat. ...), [..] ni «- Remastered».</summary>
+    public static string SearchTitle(string title)
+    {
+        var text = StripVersionSuffix(Bracketed.Replace(title, " "));
+        text = Featuring.Replace(text, "");
+        text = string.Join(" ", text.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        return text.Length == 0 ? title : text;
+    }
+
     public static string NormalizeArtist(string artist) => Simplify(Featuring.Replace(artist, ""));
 
     public static bool TitlesMatch(string a, string b)
