@@ -84,9 +84,9 @@ namespace Versalia.App
 
             var props = await session.TryGetMediaPropertiesAsync();
             var timeline = session.GetTimelineProperties();
-            var title = props.Title ?? "";
-            var artist = props.Artist ?? "";
-            var album = props.AlbumTitle ?? "";
+            var title = System.Net.WebUtility.HtmlDecode(props.Title ?? "");
+            var artist = System.Net.WebUtility.HtmlDecode(props.Artist ?? "");
+            var album = System.Net.WebUtility.HtmlDecode(props.AlbumTitle ?? "");
 
             // Apple Music para Windows suele dar «Artista — Álbum» en el campo de artista.
             int dash = artist.IndexOf(" — ", StringComparison.Ordinal);
@@ -101,11 +101,12 @@ namespace Versalia.App
             if (state == PlaybackState.Playing)
             {
                 double sinceUpdate = (DateTimeOffset.UtcNow - timeline.LastUpdatedTime).TotalMilliseconds;
-                if (sinceUpdate > 0 && sinceUpdate < 10_000) positionMs += sinceUpdate;
+                if (sinceUpdate > 0) positionMs += sinceUpdate;
             }
             if (durationMs > 0) positionMs = Math.Min(positionMs, durationMs);
 
-            TrackInfo? track = title.Length == 0
+            // «Conectando…» (sin artista ni duración) es un estado transitorio de Apple Music, no una pista.
+            TrackInfo? track = title.Length == 0 || (artist.Length == 0 && durationMs <= 0)
                 ? null
                 : new TrackInfo($"{title}|{artist}|{album}", title, artist, album, (int)durationMs);
 

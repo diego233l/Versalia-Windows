@@ -42,7 +42,7 @@ namespace Versalia.App
         {
             _settings = settings;
             var provider = new CompositeLyricsProvider(
-                new ILyricsProvider[] { new NetEaseProvider(), new LrclibProvider() }, Log.Write);
+                new ILyricsProvider[] { new NetEaseProvider(log: Log.Write), new LrclibProvider() }, Log.Write);
             _service = new LyricsService(provider, new LyricsCache(Paths.Cache));
             _frame.Status = LyricsStatus.NoTrack;
         }
@@ -98,26 +98,38 @@ namespace Versalia.App
 
         private async Task LoadLyrics(TrackInfo track, CancellationToken ct)
         {
-            try
+            // Un fallo de red (p. ej. el 503 de LRCLIB) se reintenta con espera creciente.
+            int[] retryDelaysSeconds = { 15, 45, 120 };
+            for (int attempt = 0; ; attempt++)
             {
-                var lyrics = await _service.LoadAsync(track, ct);
-                if (ct.IsCancellationRequested) return;
-                if (lyrics == null || lyrics.IsEmpty)
+                try
                 {
-                    _frame.Status = LyricsStatus.Missing;
+                    var lyrics = await _service.LoadAsync(track, ct);
+                    if (ct.IsCancellationRequested) return;
+                    if (lyrics == null || lyrics.IsEmpty)
+                    {
+                        _frame.Status = LyricsStatus.Missing;
+                        return;
+                    }
+                    _cursor = new SyncCursor(lyrics);
+                    _frame.Words = new WordStream(lyrics);
+                    _frame.Lyrics = lyrics;
+                    _frame.LyricsId = ++_lyricsCounter;
+                    _frame.Status = LyricsStatus.Ready;
                     return;
                 }
-                _cursor = new SyncCursor(lyrics);
-                _frame.Words = new WordStream(lyrics);
-                _frame.Lyrics = lyrics;
-                _frame.LyricsId = ++_lyricsCounter;
-                _frame.Status = LyricsStatus.Ready;
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception e)
-            {
-                Log.Write("Error al cargar la letra: " + e.Message);
-                if (!ct.IsCancellationRequested) _frame.Status = LyricsStatus.Error;
+                catch (OperationCanceledException) { return; }
+                catch (Exception e)
+                {
+                    Log.Write("Error al cargar la letra: " + e.Message);
+                    if (ct.IsCancellationRequested) return;
+                    _frame.Status = LyricsStatus.Error;
+                    if (attempt >= retryDelaysSeconds.Length) return;
+                    try { await Task.Delay(TimeSpan.FromSeconds(retryDelaysSeconds[attempt]), ct); }
+                    catch (OperationCanceledException) { return; }
+                    _frame.Status = LyricsStatus.Loading;
+                    Log.Write($"Reintentando la letra (intento {attempt + 2})…");
+                }
             }
         }
 

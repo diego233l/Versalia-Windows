@@ -135,6 +135,13 @@ public class MatcherTests
     public void NormalizesTitles(string input, string expected) =>
         Assert.Equal(expected, TrackMatcher.NormalizeTitle(input));
 
+    [Theory]
+    [InlineData("We Don’t Talk Anymore (feat. Selena Gomez)", "We Don’t Talk Anymore")]
+    [InlineData("Song - Remastered 2011", "Song")]
+    [InlineData("Canción Ñandú", "Canción Ñandú")]
+    public void SearchTitleKeepsAccentsButDropsExtras(string input, string expected) =>
+        Assert.Equal(expected, TrackMatcher.SearchTitle(input));
+
     [Fact]
     public void DurationToleranceIsThreeSeconds()
     {
