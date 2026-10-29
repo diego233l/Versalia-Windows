@@ -161,7 +161,7 @@ namespace Versalia.App
             if (_offsetLabel == null || _getOffset == null) return;
             int ms = _getOffset();
             string sign = ms > 0 ? "+" : ms < 0 ? "−" : "";
-            _offsetLabel.Text = ms == 0 ? "Sincronía: 0 ms" : $"Sincronía: {sign}{Math.Abs(ms)} ms";
+            _offsetLabel.Text = ms == 0 ? "Esta canción: 0 ms" : $"Esta canción: {sign}{Math.Abs(ms)} ms";
         }
 
         private void ShowControls()

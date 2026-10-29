@@ -37,12 +37,16 @@ namespace Versalia.App
         private readonly Frame _frame = new Frame();
         private Palette? _artPalette;
         private long _lyricsCounter;
+        private int _trackOffset;
+        // Estadística de la deriva del reloj para el registro.
+        private int _statReadings, _statCorrections, _statSeeks;
+        private double _statAbsDrift, _statMaxDrift, _statLastLog;
 
         public Director(Settings settings)
         {
             _settings = settings;
             var provider = new CompositeLyricsProvider(
-                new ILyricsProvider[] { new NetEaseProvider(log: Log.Write), new LrclibProvider() }, Log.Write);
+                new ILyricsProvider[] { new NetEaseProvider(log: Log.Write), new KugouProvider(log: Log.Write), new LrclibProvider() }, Log.Write);
             _service = new LyricsService(provider, new LyricsCache(Paths.Cache));
             _frame.Status = LyricsStatus.NoTrack;
         }
@@ -72,8 +76,25 @@ namespace Versalia.App
             }
             else
             {
+                double predicted = _clock.PositionMs(snapshot.CapturedAt);
                 var outcome = _clock.Observe(snapshot.PositionMs, snapshot.CapturedAt, playing, 60);
-                if (outcome == InterpolatedClock.Outcome.Seek) Log.Write("Salto en la pista, resincronizando.");
+                if (outcome == InterpolatedClock.Outcome.Seek) { Log.Write("Salto en la pista, resincronizando."); _statSeeks++; }
+                else if (playing)
+                {
+                    double drift = Math.Abs(snapshot.PositionMs - predicted);
+                    _statReadings++;
+                    _statAbsDrift += drift;
+                    _statMaxDrift = Math.Max(_statMaxDrift, drift);
+                    if (outcome == InterpolatedClock.Outcome.Corrected) _statCorrections++;
+                }
+                if (snapshot.CapturedAt - _statLastLog > 60 && _statReadings > 0)
+                {
+                    Log.Write($"Reloj: {_statReadings} lecturas, desviación media {_statAbsDrift / _statReadings:0} ms, " +
+                              $"máx {_statMaxDrift:0} ms, {_statCorrections} correcciones, {_statSeeks} saltos.");
+                    _statLastLog = snapshot.CapturedAt;
+                    _statReadings = _statCorrections = _statSeeks = 0;
+                    _statAbsDrift = _statMaxDrift = 0;
+                }
             }
             if (artwork != null) SetArtwork(artwork);
         }
@@ -92,6 +113,8 @@ namespace Versalia.App
             _fetch?.Cancel();
             _fetch = new CancellationTokenSource();
             _frame.Track = track;
+            _trackOffset = TrackOffsetMs;
+            if (_trackOffset != 0) Log.Write($"Usando el ajuste guardado de esta canción: {_trackOffset:+#;-#;0} ms");
             _frame.Artwork = null;
             _frame.Lyrics = null; _frame.Words = null;
             _frame.Status = LyricsStatus.Loading;
@@ -175,9 +198,27 @@ namespace Versalia.App
             _settings.Save();
         }
 
+        private static string TrackKey(TrackInfo t) =>
+            TrackMatcher.NormalizeTitle(t.Title) + "|" + TrackMatcher.NormalizeArtist(t.Artist);
+
+        /// <summary>Ajuste de esta canción (se suma al general). Se guarda y se recupera al volver a sonar.</summary>
+        public int TrackOffsetMs =>
+            _frame.Track != null && _settings.TrackOffsets.TryGetValue(TrackKey(_frame.Track), out var v) ? v : 0;
+
+        public void ChangeTrackOffset(int deltaMs)
+        {
+            if (_frame.Track == null) return;
+            var key = TrackKey(_frame.Track);
+            int value = deltaMs == 0 ? 0 : Math.Clamp(TrackOffsetMs + deltaMs, -3000, 3000);
+            if (value == 0) _settings.TrackOffsets.Remove(key); else _settings.TrackOffsets[key] = value;
+            _trackOffset = value;
+            _settings.Save();
+            Log.Write($"Sincronía de «{_frame.Track.Title}»: {value:+#;-#;0} ms");
+        }
+
         public Frame Tick(double now)
         {
-            double position = _clock.PositionMs(now) + _settings.OffsetMs;
+            double position = _clock.PositionMs(now) + _settings.OffsetMs + _trackOffset;
             _frame.PositionMs = position;
             if (_frame.Status == LyricsStatus.Ready && _cursor != null && _frame.Words != null)
             {

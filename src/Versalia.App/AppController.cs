@@ -132,7 +132,7 @@ namespace Versalia.App
             {
                 var window = overlay
                     ? new SceneWindow(_scene, m, true)
-                    : new SceneWindow(_scene, m, false, delta => _director.ChangeOffset(delta), () => _settings.OffsetMs,
+                    : new SceneWindow(_scene, m, false, delta => _director.ChangeTrackOffset(delta), () => _director.TrackOffsetMs,
                         showControls: m.Index == lyricIndex);
                 window.EscapePressed += OnEscape;
                 _windows.Add(window);

@@ -6,16 +6,19 @@ namespace Versalia.Core;
 /// <summary>Formato por palabra de NetEase: [inicio,dur](inicio,dur,0)trozo...</summary>
 public static class YrcParser
 {
-    public static Lyrics Parse(string text, string source = "netease")
+    public static Lyrics Parse(string text, string source = "netease") => ParseTimed(text, source, '(', ')', relative: false);
+
+    /// <summary>Líneas [inicio,dur] seguidas de trozos con tiempo. <paramref name="relative"/>: tiempos de trozo relativos a la línea (KRC).</summary>
+    internal static Lyrics ParseTimed(string text, string source, char open, char close, bool relative)
     {
         var lines = new List<LyricLine>();
         foreach (var raw in text.Split('\n'))
         {
             var line = raw.Trim();
             if (!line.StartsWith('[')) continue;
-            int close = line.IndexOf(']');
-            if (close < 0) continue;
-            var header = line[1..close].Split(',');
+            int headerEnd = line.IndexOf(']');
+            if (headerEnd < 0) continue;
+            var header = line[1..headerEnd].Split(',');
             if (header.Length != 2 || !int.TryParse(header[0], out var lineStart) || !int.TryParse(header[1], out var lineDuration)) continue;
 
             var words = new List<LyricWord>();
@@ -30,8 +33,9 @@ public static class YrcParser
                 pendingText = null;
             }
 
-            foreach (var (start, duration, chunk) in Chunks(line[(close + 1)..]))
+            foreach (var (rawStart, duration, chunk) in Chunks(line[(headerEnd + 1)..], open, close))
             {
+                int start = relative ? lineStart + rawStart : rawStart;
                 bool startsWord = (chunk.Length > 0 && char.IsWhiteSpace(chunk[0]))
                     || chunk.Any(WordTimingEstimator.IsCjk)
                     || (pendingText != null && pendingText.Any(WordTimingEstimator.IsCjk));
@@ -48,7 +52,7 @@ public static class YrcParser
         return new Lyrics(lines, source);
     }
 
-    internal static List<(int Start, int Duration, string Text)> Chunks(string body)
+    internal static List<(int Start, int Duration, string Text)> Chunks(string body, char open = '(', char close = ')')
     {
         var result = new List<(int, int, string)>();
         (int Start, int Duration)? current = null;
@@ -56,19 +60,19 @@ public static class YrcParser
         int i = 0;
         while (i < body.Length)
         {
-            if (body[i] == '(')
+            if (body[i] == open)
             {
-                int close = body.IndexOf(')', i);
-                if (close > i)
+                int end = body.IndexOf(close, i);
+                if (end > i)
                 {
-                    var fields = body[(i + 1)..close].Split(',');
+                    var fields = body[(i + 1)..end].Split(',');
                     if (fields.Length >= 2 && int.TryParse(fields[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var s)
                         && int.TryParse(fields[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var d))
                     {
                         if (current.HasValue) result.Add((current.Value.Start, current.Value.Duration, text.ToString()));
                         current = (s, d);
                         text.Clear();
-                        i = close + 1;
+                        i = end + 1;
                         continue;
                     }
                 }
