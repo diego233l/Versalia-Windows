@@ -53,6 +53,7 @@ namespace Versalia.App
         }
 
         private string _lastSessionIds = "";
+        private int _zeroDurationPolls;
 
         /// <summary>Solo Apple Music y Spotify; navegadores, vídeos y demás se ignoran.</summary>
         private static bool IsSupported(GlobalSystemMediaTransportControlsSession s) =>
@@ -106,6 +107,15 @@ namespace Versalia.App
             }
 
             double durationMs = Math.Max(0, (timeline.EndTime - timeline.StartTime).TotalMilliseconds);
+            // Al cambiar de canción el reproductor tarda un momento en dar la duración: se espera un poco antes de
+            // dar la pista por buena, para buscar la letra con la duración correcta.
+            if (title.Length > 0 && durationMs <= 0 && _zeroDurationPolls < 4)
+            {
+                _zeroDurationPolls++;
+                _wake = true;
+                return;
+            }
+            _zeroDurationPolls = 0;
             double positionMs = Math.Max(0, (timeline.Position - timeline.StartTime).TotalMilliseconds);
             // Algunos reproductores (p. ej. vídeos del navegador) repiten la misma posición y marca de tiempo: no es una lectura nueva.
             bool fresh = positionMs != _lastRawPositionMs || timeline.LastUpdatedTime != _lastRawUpdated;
